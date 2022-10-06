@@ -22,6 +22,7 @@ Google大神 Jeff Dean在之前的一次演讲中展示了这样一张表，非�
 ![img](./JVM调优/imag/cache%20line%E6%A6%82%E5%BF%B5%E5%9B%BE.png)
 
 **缓存行**：读取缓存以cache line为基本单位，目前64bytes。
+
 **伪共享**：位于同一缓存行的两个不同数据，被两个不同CPU锁定，产生互相影响的伪共享问题。
 
 测试伪共享问题
@@ -309,7 +310,7 @@ public class DisOrder {
 >
 >  在Load2及后续读取操作要读取的数据被访问前，保证Load1要读取的数据被读取完毕。
 >
-**toreStore屏障：**
+**StoreStore屏障：**
 >
 >  	对于这样的语句Store1; StoreStore; Store2，
 >		
@@ -329,7 +330,7 @@ public class DisOrder {
 ### volatile的实现细节
 
 1. 字节码层面
-   > ACC_VOLATILE
+   > Access flags: 0x0040 [volatile]
 
 2. JVM层面
 
@@ -337,28 +338,83 @@ public class DisOrder {
    >
    > StoreStoreBarrier
    >
-   volatile 写操作
+   > volatile 写操作
    >
    > StoreLoadBarrier
+   >
 
    > LoadLoadBarrier
    >
-   volatile 读操作
+   > volatile 读操作
    >
    > LoadStoreBarrier
 
 1. OS和硬件层面
+   
    https://blog.csdn.net/qq_26222859/article/details/52235930
+
    hsdis - HotSpot Dis Assembler
+   
    windows lock 指令实现 | MESI实现
 
 ### synchronized实现细节
 
 1. 字节码层面
-   ACC_SYNCHRONIZED
-   monitorenter monitorexit
+   ```java
+    synchronized void m() {
+    }
+   ```
+   上面同步方法对应的字节码是  Access flags：0x0020[synchronized]
+    ```java
+    void n() {
+        synchronized (this) {
+        }
+    }
+    ```
+     对应的字节码
+    ```java
+    0 aload_0
+    1 dup
+    2 astore_1
+    3 monitorenter
+    4 aload_1
+    5 monitorexit
+    6 goto 14 (+8)
+    9 astore_2
+    10 aload_1
+    11 monitorexit
+    12 aload_2
+    13 athrow
+    14 return
+    ```
+    可以看出有 monitorenter monitorexit
+
+    这里有两个monitorexit，正常退出是一个，异常退出是一个
 2. JVM层面
+   
    C C++ 调用了操作系统提供的同步机制
+
 3. OS和硬件层面
+
    X86 : lock cmpxchg / xxx
+   
    [https](https://blog.csdn.net/21aspnet/article/details/88571740)[://blog.csdn.net/21aspnet/article/details/](https://blog.csdn.net/21aspnet/article/details/88571740)[88571740](https://blog.csdn.net/21aspnet/article/details/88571740)
+
+## 排序规范
+### hanppens-before原则
+hanppens-before原则（JVM规定重排序必须遵守的规则）JLS17.4.5
+
+使用happens-before的概念来指定两个操作之间的执行顺序。由于这两个操作可以在一个线程之内，也可以是在不同线程之间。因此，JMM可以通过happens-before关系向程序员提供跨线程的内存可见性保证（如果A线程的写操作a与B线程的读操作b之间存在happens-before关系，尽管a操作和b操作在不同的线程中执行，但JMM向程序员保证a操作将对b操作可见）
+
+- **程序次序规则**：同一个线程内，按照代码出现的顺序，前面的代码先行于后面的代码，准确的说是控制流顺序，因为要考虑到分支和循环结构。
+- **管程锁定规则**：一个unlock操作先行发生于后面（时间上）对同一个锁的lock操作。
+- **volatile变量规则**：对一个volatile变量的写操作先行发生于后面（时间上）对这个变量的读操作。
+- **线程启动规则**：Thread的start( )方法先行发生于这个线程的每一个操作。
+- **线程终止规则**：线程的所有操作都先行于此线程的终止检测。可以通过Thread.join()方法结束、Thread.isAlive( )的返回值等手段检测线程的终止。
+- **线程中断规则**：对线程interrupt( )方法的调用先行发生于被中断线程的代码检测到中断事件的发生，可以通过Thread.interrupt( )方法检测线程是否中断
+- **对象终结规则**：一个对象的初始化完成先行于发生它的finalize()方法的开始。
+- **传递性**：如果操作A先行于操作B，操作B先行于操作C，那么操作A先行于操作C
+- **对象finalize规则**：一个对象的初始化完成（构造函数执行结束）先行于发生它的finalize()方法的开始。
+
+## as if serial
+不管如何重排序，单线程执行结果不会改变
