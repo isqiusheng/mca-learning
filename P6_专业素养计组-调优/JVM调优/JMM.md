@@ -1,5 +1,5 @@
 # 硬件层数据一致性
-![img](./JVM调优/imag/存储器层次结构.png)
+![img](./imag/存储器层次结构.png)
 
 L0,L1,L2 在CPU内部
 L3,L4,L5,L6 是CPU共享的
@@ -14,12 +14,12 @@ L3,L4,L5,L6 是CPU共享的
 | 寄存器 | 1 cycle |  |
 
 Google大神 Jeff Dean在之前的一次演讲中展示了这样一张表，非常有意思：
-![img](./JVM调优/imag/存储器层次的访问耗时.jpg)
+![img](./imag/存储器层次的访问耗时.jpg)
 
 访问L2 cache的时延大概是访问L1 cache的10几倍左右，而访问一次内存的时延则高达访问L2 cache的20倍，是访问L1cache耗时的200倍。
 
 ## cache line 的概念 缓存行对齐 伪共享
-![img](./JVM调优/imag/cache%20line%E6%A6%82%E5%BF%B5%E5%9B%BE.png)
+![img](./imag/cache%20line%E6%A6%82%E5%BF%B5%E5%9B%BE.png)
 
 **缓存行**：读取缓存以cache line为基本单位，目前64bytes。
 
@@ -110,7 +110,7 @@ public class Sequence extends RhsPadding {
 ## 数据一致性
 
 ### 多线程一致性的硬件支持
-![img](./JVM调优/imag/bus保证多线程数据一致性.png)
+![img](./imag/bus保证多线程数据一致性.png)
 
 总线程会锁住总线，使得其它CPU甚至不能访问内存中的其它的地址，因为效率较低。
 
@@ -313,13 +313,13 @@ public class DisOrder {
 **StoreStore屏障：**
 >
 >  	对于这样的语句Store1; StoreStore; Store2，
->		
+>			
 >  	在Store2及后续写入操作执行前，保证Store1的写入操作对其它处理器可见。
 >
 **LoadStore屏障：**
 >
 >  	对于这样的语句Load1; LoadStore; Store2，
->		
+>			
 >  	在Store2及后续写入操作被刷出前，保证Load1要读取的数据被读取完毕。
 >
 **StoreLoad屏障：(全能屏障)**

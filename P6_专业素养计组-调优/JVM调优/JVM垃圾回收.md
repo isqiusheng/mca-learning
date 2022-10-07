@@ -213,5 +213,4 @@ JDK1.8 默认使用的是 Parallel Scavenge + Parallel Old，如果指定了-XX:
 
 # 参考资料
 https://javaguide.cn/java/jvm/jvm-garbage-collection.html#parallel-scavenge-%E6%94%B6%E9%9B%86%E5%99%A8
-
-[(62条消息) Java中七大垃圾回收器_我还年轻我很平凡的博客-CSDN博客_java垃圾回收器](https://blog.csdn.net/weixin_43784989/article/details/101674169)
+https://blog.csdn.net/weixin_43784989/article/details/101674169

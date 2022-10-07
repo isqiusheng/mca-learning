@@ -1,5 +1,5 @@
 # 运行时数据区域
-![img](./JVM调优/imag/runtime_data_area.png)
+![img](./imag/runtime_data_area.png)
 
 ## 程序计数器【Program Counter Register】
 ```shell
@@ -154,11 +154,11 @@ public class Test_1 {
 
     ```java
     public class Test_InvokeInterface {
-  
+    
         public static void main(String[] args) {
             List<String> list = new ArrayList<>();
             list.add("hello");
-  
+    
             ArrayList<String> list2 = new ArrayList<>();
             list2.add("hello");
         }
