@@ -324,3 +324,172 @@ public class FullGC_Problem_Test {
 https://www.cnblogs.com/liugh/p/7620336.html （简单做法）
 
 ## jprofiler (收费)
+
+
+## arthas在线排查工具
+
+- 为什么需要在线排查？ 
+    >在生产上我们经常会碰到一些不好排查的问题，例如线程安全问题，用最简单的threaddump或者heapdump不好查到问题原因。
+    为了排查这些问题，有时我们会临时加一些日志，比如在一些关键的函数里打印出入参，然后重新打包发布，如果打了日志还是没找到问题，继续加日志，重新打包发布。对于上线流程复杂而且审核比较严的公司，从改代码到上线需要层层的流转，会大大影响问题排查的进度。
+- jvm观察jvm信息
+- thread定位线程问题
+- dashboard 观察系统情况
+- heapdump + jhat分析
+- jad反编译 
+  > 动态代理生成类的问题定位 第三方的类（观察代码） 版本问题（确定自己最新提交的版本是不是被使用）
+  > redefine 热替换 目前有些限制条件：只能改方法实现（方法已经运行完成），不能改方法名， 不能改属性 m() -> mm()
+- sc - search class
+- watch - watch method、
+- 没有包含的功能：jmap
+
+
+# 案例汇总
+OOM产生的原因多种多样，有些程序未必产生OOM，不断FGC(CPU飙高，但内存回收特别少) （上面案例）
+
+1. 硬件升级系统反而卡顿的问题（见上）
+
+2. 线程池不当运用产生OOM问题（见上） 不断的往List里加对象（实在太LOW）
+
+3. smile jira问题 实际系统不断重启 解决问题 加内存 + 更换垃圾回收器 G1 真正问题在哪儿？不知道
+
+4. tomcat http-header-size过大问题（Hector）
+
+5. lambda表达式导致方法区溢出问题(MethodArea / Perm Metaspace) LambdaGC.java -XX:MaxMetaspaceSize=5M -XX:+PrintGCDetails
+
+    ```java
+    public class LambdaGC {
+    
+        public static void main(String[] args) {
+            for (; ; ) {
+                I i = C::n;
+            }
+        }
+    
+        public static interface I {
+            void m();
+        }
+    
+        public static class C {
+            static void n() {
+                System.out.println("hello");
+            }
+        }
+    }
+    ```
+6. 直接内存溢出问题（少见） 
+   > 《深入理解Java虚拟机》P59，使用Unsafe分配直接内存，或者使用NIO的问题
+
+7. 栈溢出问题 
+   > -Xss设定太小
+
+8. 比较一下这两段程序的异同，分析哪一个是更优的写法：
+   ```java
+    // 这种更好些
+    Object o = null;
+    for(int i=0; i<100; i++) {
+        o = new Object();
+        //业务处理
+    }
+   ```
+   ```java
+    for(int i=0; i<100; i++) {
+        Object o = new Object();
+    }
+   ```
+9. 重写finalize引发频繁GC 
+    > 小米云，HBase同步系统，系统通过nginx访问超时报警，最后排查，C++程序员重写finalize引发频繁GC问题
+    > 
+    > 为什么C++程序员会重写finalize？（new delete） 
+    >
+    > 为什么会引发频繁GC问题？finalize耗时比较长（里面耗时的操作，如耗时200ms）
+10. 如果有一个系统，内存一直消耗不超过10%，但是观察GC日志，发现FGC总是频繁产生，会是什么引起的？ System.gc() (这个比较Low)
+
+11. Distuptor有个可以设置链的长度，如果过大，然后对象大，消费完不主动释放，会溢出 (来自 死物风情)
+
+12. 用jvm都会溢出，mycat用崩过，1.6.5某个临时版本解析sql子查询算法有问题，9个exists的联合sql就导致生成几百万的对象（来自 死物风情）
+
+13. new 大量线程，会产生 native thread OOM，（low）应该用线程池， 解决方案：减少堆空间（太TMlow了）,预留更多内存产生native thread JVM内存占物理内存比例 50% - 80%
+
+
+# GC常用参数
+
+- -Xmn -Xms -Xmx -Xss 年轻代 最小堆 最大堆 栈空间
+- -XX:+UseTLAB 使用TLAB，默认打开
+- -XX:+PrintTLAB 打印TLAB的使用情况
+- -XX:TLABSize 设置TLAB大小
+- -XX:+DisableExplictGC System.gc()不管用 ，FGC
+- -XX:+PrintGC
+- -XX:+PrintGCDetails
+- -XX:+PrintHeapAtGC
+- -XX:+PrintGCTimeStamps
+- -XX:+PrintGCApplicationConcurrentTime (低) 打印应用程序时间
+- -XX:+PrintGCApplicationStoppedTime （低） 打印暂停时长
+- -XX:+PrintReferenceGC （重要性低） 记录回收了多少种不同引用类型的引用
+- -verbose:class 类加载详细过程
+- -XX:+PrintVMOptions
+- -XX:+PrintFlagsFinal -XX:+PrintFlagsInitial 必须会用
+- -Xloggc:opt/log/gc.log
+- -XX:MaxTenuringThreshold 升代年龄，最大值15
+- 锁自旋次数 -XX:PreBlockSpin 热点代码检测参数-XX:CompileThreshold 逃逸分析 标量替换 ... 这些不建议设置
+
+# Parallel常用参数
+
+- -XX:SurvivorRatio
+- -XX:PreTenureSizeThreshold 大对象到底多大
+- -XX:MaxTenuringThreshold
+- -XX:+ParallelGCThreads 并行收集器的线程数，同样适用于CMS，一般设为和CPU核数相同
+- -XX:+UseAdaptiveSizePolicy 自动选择各区大小比例
+
+# CMS常用参数
+
+- -XX:+UseConcMarkSweepGC
+- -XX:ParallelCMSThreads CMS线程数量
+- -XX:CMSInitiatingOccupancyFraction 使用多少比例的老年代后开始CMS收集，默认是68%(近似值)，如果频繁发生SerialOld卡顿，应该调小，（频繁CMS回收）
+- -XX:+UseCMSCompactAtFullCollection 在FGC时进行压缩
+- -XX:CMSFullGCsBeforeCompaction 多少次FGC之后进行压缩
+- -XX:+CMSClassUnloadingEnabled
+- -XX:CMSInitiatingPermOccupancyFraction 达到什么比例时进行Perm回收
+- GCTimeRatio 设置GC时间占用程序运行时间的百分比
+- -XX:MaxGCPauseMillis 停顿时间，是一个建议时间，GC会尝试用各种手段达到这个时间，比如减小年轻代
+
+# G1常用参数
+
+- -XX:+UseG1GC
+- -XX:MaxGCPauseMillis 建议值，G1会尝试调整Young区的块数来达到这个值
+- -XX:GCPauseIntervalMillis ？GC的间隔时间
+- -XX:+G1HeapRegionSize 分区大小，建议逐渐增大该值，1 2 4 8 16 32。 随着size增加，垃圾的存活时间更长，GC间隔更长，但每次GC的时间也会更长 ZGC做了改进（动态区块大小）
+- G1NewSizePercent 新生代最小比例，默认为5%
+- G1MaxNewSizePercent 新生代最大比例，默认为60%
+- GCTimeRatio GC时间建议比例，G1会根据这个值调整堆空间
+- ConcGCThreads 线程数量
+- InitiatingHeapOccupancyPercent 启动G1的堆空间占用比例
+
+# 参考资料
+
+1. [https://blogs.oracle.com/](https://blogs.oracle.com/jonthecollector/our-collectors)[jonthecollector](https://blogs.oracle.com/jonthecollector/our-collectors)[/our-collectors](https://blogs.oracle.com/jonthecollector/our-collectors)
+
+2. https://docs.oracle.com/javase/8/docs/technotes/tools/unix/java.html
+
+3. http://java.sun.com/javase/technologies/hotspot/vmoptions.jsp
+
+4. JVM调优参考文档：https://docs.oracle.com/en/java/javase/13/gctuning/introduction-garbage-collection-tuning.html#GUID-8A443184-7E07-4B71-9777-4F12947C8184
+
+5. https://www.cnblogs.com/nxlhero/p/11660854.html 在线排查工具
+
+6. https://www.jianshu.com/p/507f7e0cc3a3 arthas常用命令
+
+7. Arthas手册：([简介 | arthas (aliyun.com)](https://arthas.aliyun.com/doc/))
+
+   1. 启动arthas java -jar arthas-boot.jar
+   2. 绑定java进程
+   3. dashboard命令观察系统整体情况
+   4. help 查看帮助
+   5. help xx 查看具体命令帮助
+
+8. jmap命令参考：
+
+   https://www.jianshu.com/p/507f7e0cc3a3
+
+   1. jmap -heap pid
+   2. jmap -histo pid
+   3. jmap -clstats pid
