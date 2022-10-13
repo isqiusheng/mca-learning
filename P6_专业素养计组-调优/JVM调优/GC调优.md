@@ -342,8 +342,105 @@ https://www.cnblogs.com/liugh/p/7620336.html （简单做法）
 - watch - watch method、
 - 没有包含的功能：jmap
 
+# GC日志详情
+
+## CMS日志
+
+执行命令：
+
+```shell
+java -Xms20M -Xmx20M -XX:+PrintGCDetails -XX:+UseConcMarkSweepGC FullGC_Problem_Test
+```
+
+```java
+[GC (Allocation Failure) [ParNew: 6144K->640K(6144K), 0.0265885 secs] 6585K->2770K(19840K), 0.0268035 secs] [Times: user=0.02 sys=0.00, real=0.02 secs]
+// ParNew：年轻代收集器
+// 6144->640：收集前后的对比
+//（6144）：整个年轻代容量
+// 6585 -> 2770：整个堆的情况
+// （19840）：整个堆大小
+[GC (CMS Initial Mark) [1 CMS-initial-mark: 8511K(13696K)] 9866K(19840K), 0.0040321 secs] [Times: user=0.01 sys=0.00, real=0.00 secs] 
+	//8511 (13696) : 老年代使用（最大）
+	//9866 (19840) : 整个堆使用（最大）
+[CMS-concurrent-mark-start]
+[CMS-concurrent-mark: 0.018/0.018 secs] [Times: user=0.01 sys=0.00, real=0.02 secs] 
+	//这里的时间意义不大，因为是并发执行
+[CMS-concurrent-preclean-start]
+[CMS-concurrent-preclean: 0.000/0.000 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] 
+	//标记Card为Dirty，也称为Card Marking
+[GC (CMS Final Remark) [YG occupancy: 1597 K (6144 K)][Rescan (parallel) , 0.0008396 secs][weak refs processing, 0.0000138 secs][class unloading, 0.0005404 secs][scrub symbol table, 0.0006169 secs][scrub string table, 0.0004903 secs][1 CMS-remark: 8511K(13696K)] 10108K(19840K), 0.0039567 secs] [Times: user=0.00 sys=0.00, real=0.00 secs] 
+	//STW阶段，YG occupancy:年轻代占用及容量
+	//[Rescan (parallel)：STW下的存活对象标记
+	//weak refs processing: 弱引用处理
+	//class unloading: 卸载用不到的class
+	//scrub symbol(string) table: 
+		//cleaning up symbol and string tables which hold class-level metadata and 
+		//internalized string respectively
+	//CMS-remark: 8511K(13696K): 阶段过后的老年代占用及容量
+	//10108K(19840K): 阶段过后的堆占用及容量
+
+[CMS-concurrent-sweep-start]
+[CMS-concurrent-sweep: 0.005/0.005 secs] [Times: user=0.00 sys=0.00, real=0.01 secs] 
+	//标记已经完成，进行并发清理
+[CMS-concurrent-reset-start]
+[CMS-concurrent-reset: 0.000/0.000 secs] [Times: user=0.00 sys=0.00, real=0.00 secs]
+	//重置内部结构，为下次GC做准备
+```
+
+## G1日志详解
+
+执行命令;
+
+```shell
+java -Xms20M -Xmx20M -XX:+PrintGCDetails -XX:+UseG1GC FullGC_Problem_Test
+```
+
+```java
+[GC pause (G1 Evacuation Pause) (young), 0.0053982 secs]
+//young -> 年轻代 Evacuation-> 复制存活对象 
+//initial-mark 混合回收的阶段，这里是YGC混合老年代回收
+   [Parallel Time: 2.9 ms, GC Workers: 8] // 8个GC线程
+      [GC Worker Start (ms): Min: 6421.6, Avg: 6422.7, Max: 6423.8, Diff: 2.3]
+      [Ext Root Scanning (ms): Min: 0.0, Avg: 0.4, Max: 1.7, Diff: 1.7, Sum: 3.3]
+      [Update RS (ms): Min: 0.0, Avg: 0.0, Max: 0.0, Diff: 0.0, Sum: 0.0]
+         [Processed Buffers: Min: 0, Avg: 0.0, Max: 0, Diff: 0, Sum: 0]
+      [Scan RS (ms): Min: 0.0, Avg: 0.0, Max: 0.0, Diff: 0.0, Sum: 0.0]
+      [Code Root Scanning (ms): Min: 0.0, Avg: 0.0, Max: 0.1, Diff: 0.1, Sum: 0.1]
+      [Object Copy (ms): Min: 0.0, Avg: 0.6, Max: 1.6, Diff: 1.6, Sum: 4.7]
+      [Termination (ms): Min: 0.0, Avg: 0.2, Max: 0.3, Diff: 0.3, Sum: 1.3]
+         [Termination Attempts: Min: 1, Avg: 4.4, Max: 10, Diff: 9, Sum: 35]
+      [GC Worker Other (ms): Min: 0.0, Avg: 0.0, Max: 0.0, Diff: 0.0, Sum: 0.1]
+      [GC Worker Total (ms): Min: 0.0, Avg: 1.2, Max: 2.3, Diff: 2.3, Sum: 9.4]
+      [GC Worker End (ms): Min: 6423.9, Avg: 6423.9, Max: 6424.0, Diff: 0.1]
+   [Code Root Fixup: 0.0 ms]
+   [Code Root Purge: 0.0 ms]
+   [Clear CT: 0.8 ms]
+   [Other: 1.6 ms]
+      [Choose CSet: 0.0 ms]
+      [Ref Proc: 0.8 ms]
+      [Ref Enq: 0.0 ms]
+      [Redirty Cards: 0.7 ms]
+      [Humongous Register: 0.0 ms]
+      [Humongous Reclaim: 0.0 ms]
+      [Free CSet: 0.0 ms]
+   [Eden: 12.0M(12.0M)->0.0B(10.0M) Survivors: 0.0B->2048.0K Heap: 12.0M(20.0M)->2000.1K(20.0M)]
+ [Times: user=0.00 sys=0.01, real=0.01 secs]
+//以下是混合回收其他阶段
+[GC concurrent-root-region-scan-start]
+[GC concurrent-root-region-scan-end, 0.0006423 secs]
+[GC concurrent-mark-start]
+[GC concurrent-mark-end, 0.0155101 secs]
+...
+//无法evacuation，进行FGC
+[Full GC (Allocation Failure)  19M->15M(20M), 0.0289796 secs]
+   [Eden: 0.0B(1024.0K)->0.0B(1024.0K) Survivors: 0.0B->0.0B Heap: 19.9M(20.0M)->15.7M(20.0M)], [Metaspace: 3856K->3856K(1056768K)]
+ [Times: user=0.04 sys=0.00, real=0.03 secs]
+```
+
+
 
 # 案例汇总
+
 OOM产生的原因多种多样，有些程序未必产生OOM，不断FGC(CPU飙高，但内存回收特别少) （上面案例）
 
 1. 硬件升级系统反而卡顿的问题（见上）
@@ -463,6 +560,78 @@ OOM产生的原因多种多样，有些程序未必产生OOM，不断FGC(CPU飙�
 - GCTimeRatio GC时间建议比例，G1会根据这个值调整堆空间
 - ConcGCThreads 线程数量
 - InitiatingHeapOccupancyPercent 启动G1的堆空间占用比例
+
+# 作业
+
+1. -XX:MaxTenuringThreshold控制的是什么？ 
+
+   > A: 对象升入老年代的年龄 
+   >
+   > B: 老年代触发FGC时的内存垃圾比例
+
+2. 生产环境中，倾向于将最大堆内存和最小堆内存设置为：（为什么？） 
+
+   > A: 相同 B：不同
+
+3. JDK1.8默认的垃圾回收器是： 
+
+   > A: ParNew + CMS 
+   >
+   > B: G1 
+   >
+   > C: PS + ParallelOld 
+   >
+   > D: 以上都不是
+
+4. 什么是响应时间优先？
+
+5. 什么是吞吐量优先？
+
+6. ParNew和PS的区别是什么？
+
+7. ParNew和ParallelOld的区别是什么？（年代不同，算法不同）
+
+8. 长时间计算的场景应该选择：
+
+   > A：停顿时间 B: 吞吐量
+
+9. 大规模电商网站应该选择：
+
+   > A：停顿时间 B: 吞吐量
+
+10. HotSpot的垃圾收集器最常用有哪些？
+
+11. 常见的HotSpot垃圾收集器组合有哪些？
+
+12. JDK1.7 1.8 1.9的默认垃圾回收器是什么？如何查看？
+
+13. 所谓调优，到底是在调什么？
+
+14. 如果采用PS + ParrallelOld组合，怎么做才能让系统基本不产生FGC
+
+15. 如果采用ParNew + CMS组合，怎样做才能够让系统基本不产生FGC
+
+    1.加大JVM内存
+
+    2.加大Young的比例
+
+    3.提高Y-O的年龄
+
+    4.提高S区比例
+
+    5.避免代码内存泄漏
+
+16. G1是否分代？G1垃圾回收器会产生FGC吗？
+
+17. 如果G1产生FGC，你应该做什么？
+
+    1. 扩内存
+    2. 提高CPU性能（回收的快，业务逻辑产生对象的速度固定，垃圾回收越快，内存空间越大）
+    3. 降低MixedGC触发的阈值，让MixedGC提早发生（默认是45%）
+
+18. 问：生产环境中能够随随便便的dump吗？ 小堆影响不大，大堆会有服务暂停或卡顿（加live可以缓解），dump前会有FGC
+
+19. 问：常见的OOM问题有哪些？ 栈 堆 MethodArea 直接内存
 
 # 参考资料
 
