@@ -106,7 +106,7 @@ enum {  locked_value             = 0, // 0 00 轻量级锁
 
 4. vs reentrantLock的区别？
 
-## 6.1 Java远吗层级
+## 6.1 Java源码层级
 
 synchronized(o)
 
@@ -365,9 +365,13 @@ JDK较早的版本OS的资源   互斥量  用户态 -> 内核态的转换  重�
 
 **偏向锁：**
 
-大多数情况下，锁不存在多线程竞争，总是由同一个线程多次获取，因此为了消除数据在无竞争情况下锁重入（CAS操作）的开销而引用偏向锁
+偏向锁是Java 6之后加入的新锁，它是一种针对加锁操作的优化手段。
+
+大多数情况下，锁不仅不存在多线程竞争，而且总是由同一线程多次获得，因此为了减少同一线程获取锁(会涉及到一些CAS操作,耗时)的代价而引入偏向锁。
 
 即在无竞争时，之前获得锁的线程再次获得锁时，会判断是否偏向锁指向我，那么该线程将不用再次获得锁，直接就可以进入同步块。
+
+所以，对于没有锁竞争的场合，偏向锁有很好的优化效果，毕竟极有可能连续多次是同一个线程申请相同的锁。但是对于锁竞争比较激烈的场合，偏向锁就失效了，因为这样场合极有可能每次申请锁的线程都是不相同的，因此这种场合下不应该使用偏向锁，否则会得不偿失，需要注意的是，偏向锁失败后，并不会立即膨胀为重量级锁，而是先升级为轻量级锁。下面我们接着了解轻量级锁。
 
 > 我们都知道StringBuffer 是线程安全的，因为其方法都是synchronized。如果我们在单线程中使用StringBuffer，因为只有一个线程获取锁，没有必要向OS申请锁，哪个线程先来，我就偏向它，这种情况没有必要设计竞争机制。
 >
@@ -399,7 +403,304 @@ JVM默认启用偏向锁 -XX:+UseBiasedLocking
 
 是内核态，需要向操作系统申请锁
 
-## 7.3 锁重入
+## 7.3 代码演示锁升级过程
+
+下面演示的JDK版本是1.8
+
+1. **普通对象 -> 轻量级锁**
+
+   ```java
+   import org.openjdk.jol.info.ClassLayout;
+   
+   public class HelloJOL {
+   
+       public static void main(String[] args) throws InterruptedException {
+   
+           Object o = new Object();
+   
+           System.out.println(ClassLayout.parseInstance(o).toPrintable());
+   
+           synchronized (o) {
+               System.out.println(ClassLayout.parseInstance(o).toPrintable());
+           }
+       }
+   }
+   ```
+
+   运行结果：
+
+   ```shell
+   java.lang.Object object internals:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+         8     4        (object header)                           e5 01 00 f8 (11100101 00000001 00000000 11111000) (-134217243)
+        12     4        (loss due to the next object alignment)
+   Instance size: 16 bytes
+   Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+   
+   java.lang.Object object internals:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           f8 f4 e2 02 (11111000 11110100 11100010 00000010) (48428280)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+         8     4        (object header)                           e5 01 00 f8 (11100101 00000001 00000000 11111000) (-134217243)
+        12     4        (loss due to the next object alignment)
+   Instance size: 16 bytes
+   Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+   ```
+
+​		一开始没有加锁的时候，markword中是001（即无锁状态），加上synchronized之后，直接变成了000（轻量级锁）。因为此时偏向锁未启动
+
+2. **普通对象 -> 匿名偏向锁**
+
+   偏向锁默认是有延迟的，延迟4s
+
+   ```java
+   import org.openjdk.jol.info.ClassLayout;
+   public class HelloJOL {
+   
+       public static void main(String[] args) throws InterruptedException {
+   
+           Thread.sleep(5000);
+   
+           Object o = new Object();
+   
+           System.out.println(ClassLayout.parseInstance(o).toPrintable());
+       }
+   }
+   ```
+
+   运行结果：
+
+   ```shell
+   java.lang.Object object internals:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+          0     4        (object header)                           05 00 00 00 (00000101 00000000 00000000 00000000) (5)
+          4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+          8     4        (object header)                           e5 01 00 f8 (11100101 00000001 00000000 11111000) (-134217243)
+        12     4        (loss due to the next object alignment)
+    Instance size: 16 bytes
+    Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+   ```
+
+   05 00 00 00 (00000101 00000000 00000000 00000000) (5)
+
+   可以看出是101（偏向锁），但后面全是0000，因为此时其知识匿名偏向锁，没有偏向任何一个线程，所以都是0
+
+3. **普通对象 -> 匿名偏向锁 -> 偏向锁**
+
+   ```java
+   import org.openjdk.jol.info.ClassLayout;
+   
+   public class HelloJOL {
+   
+       public static void main(String[] args) throws InterruptedException {
+   
+           Thread.sleep(5000);
+   
+           Object o = new Object();
+   
+           System.out.println(ClassLayout.parseInstance(o).toPrintable());
+   
+           synchronized (o) {
+               System.out.println(ClassLayout.parseInstance(o).toPrintable());
+           }
+       }
+   }
+   ```
+
+   运行结果：
+
+   ```shell
+   java.lang.Object object internals:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           05 00 00 00 (00000101 00000000 00000000 00000000) (5)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+         8     4        (object header)                           e5 01 00 f8 (11100101 00000001 00000000 11111000) (-134217243)
+        12     4        (loss due to the next object alignment)
+   Instance size: 16 bytes
+   Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+   
+   java.lang.Object object internals:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           05 29 ab 02 (00000101 00101001 10101011 00000010) (44771589)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+         8     4        (object header)                           e5 01 00 f8 (11100101 00000001 00000000 11111000) (-134217243)
+        12     4        (loss due to the next object alignment)
+   Instance size: 16 bytes
+   Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+   ```
+
+   可以发现一开始是 00000101 00000000 00000000 00000000 。后面都是0，因为此时没有指向任何线程，称之为是匿名偏向锁
+
+   当使用synchronized加锁之后，就变成了 00000101 00101001 10101011 00000010。后面不再是0了，此时就是偏向锁
+
+4. **偏向锁 -> 轻量级锁**
+   当偏向锁，有线程与其进行竞争的时候，就会升级成轻量级锁
+
+   ```java
+   import org.openjdk.jol.info.ClassLayout;
+   
+   public class HelloJOL {
+   
+       //static Object o = new Object();
+   
+       public static void main(String[] args) throws InterruptedException {
+   
+           Thread.sleep(5000);
+   
+           Object o = new Object();
+           
+           AtomicInteger i = new AtomicInteger();
+   
+           System.out.println(ClassLayout.parseInstance(o).toPrintable()); // 此时是匿名偏向锁
+   
+           synchronized (o) {
+               System.out.println(ClassLayout.parseInstance(o).toPrintable());  // 此时是偏向锁
+           }
+   
+           // 线程A去抢
+           new Thread(() -> {
+               synchronized (o) {
+                   i.getAndIncrement(); // 这里面耗时不能太长，所以这里用个计数测试下
+               }
+           }, "A").start();
+   
+           // 线程B去抢
+           new Thread(() -> {
+               synchronized (o) {
+                   System.out.println(Thread.currentThread().getName() + " 抢到了object锁，i=" + i); // 此时i等于1，说明线程A先抢到锁
+                   System.out.println(ClassLayout.parseInstance(o).toPrintable());  // 此时是轻量级锁
+               }
+           }, "B").start();
+       }
+   ```
+
+   运行结果：
+
+   ```shell
+   java.lang.Object object internals:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           05 00 00 00 (00000101 00000000 00000000 00000000) (5)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+         8     4        (object header)                           e5 01 00 f8 (11100101 00000001 00000000 11111000) (-134217243)
+        12     4        (loss due to the next object alignment)
+   Instance size: 16 bytes
+   Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+   
+   java.lang.Object object internals:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           05 29 8b 02 (00000101 00101001 10001011 00000010) (42674437)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+         8     4        (object header)                           e5 01 00 f8 (11100101 00000001 00000000 11111000) (-134217243)
+        12     4        (loss due to the next object alignment)
+   Instance size: 16 bytes
+   Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+   
+   B 抢到了object锁，i=1
+   java.lang.Object object internals:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           88 f2 19 29 (10001000 11110010 00011001 00101001) (689566344)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+         8     4        (object header)                           e5 01 00 f8 (11100101 00000001 00000000 11111000) (-134217243)
+        12     4        (loss due to the next object alignment)
+   Instance size: 16 bytes
+   Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+   ```
+
+   从运行结果可以看出
+
+   00000101 00000000 00000000 00000000 -> 匿名偏向锁
+
+   00000101 00101001 10001011 00000010 -> 偏向锁
+
+   10001000 11110010 00011001 00101001 -> 轻量级锁
+
+5. **偏向锁 -> 重量级锁**
+
+   重度竞争，耗时过长
+
+   ```java
+   import org.openjdk.jol.info.ClassLayout;
+   
+   public class HelloJOL {
+   
+       //static Object o = new Object();
+   
+       public static void main(String[] args) throws InterruptedException {
+   
+           Thread.sleep(5000);
+   
+           Object o = new Object();
+        
+   
+           System.out.println(ClassLayout.parseInstance(o).toPrintable()); // 此时是匿名偏向锁
+   
+           synchronized (o) {
+               System.out.println(ClassLayout.parseInstance(o).toPrintable());  // 此时是偏向锁
+           }
+   
+           // 线程A去抢
+           new Thread(() -> {
+               synchronized (o) {
+                   // 休眠100ms
+                   try {
+                       Thread.sleep(100);
+                   } catch (InterruptedException e) {
+                       e.printStackTrace();
+                   }
+               }
+           }, "A").start();
+   
+           // 线程B去抢
+           new Thread(() -> {
+               synchronized (o) {
+                   System.out.println(Thread.currentThread().getName() + " 抢到了object锁");
+                   System.out.println(ClassLayout.parseInstance(o).toPrintable());  // 此时是轻量级锁
+               }
+           }, "B").start();
+       }
+   ```
+
+   运行结果;
+
+   ```shell
+   java.lang.Object object internals:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           05 00 00 00 (00000101 00000000 00000000 00000000) (5)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+         8     4        (object header)                           e5 01 00 f8 (11100101 00000001 00000000 11111000) (-134217243)
+        12     4        (loss due to the next object alignment)
+   Instance size: 16 bytes
+   Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+   
+   java.lang.Object object internals:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           05 29 4d 03 (00000101 00101001 01001101 00000011) (55388421)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+         8     4        (object header)                           e5 01 00 f8 (11100101 00000001 00000000 11111000) (-134217243)
+        12     4        (loss due to the next object alignment)
+   Instance size: 16 bytes
+   Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+   
+   B 抢到了object锁
+   java.lang.Object object internals:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           9a 13 52 26 (10011010 00010011 01010010 00100110) (642913178)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+         8     4        (object header)                           e5 01 00 f8 (11100101 00000001 00000000 11111000) (-134217243)
+        12     4        (loss due to the next object alignment)
+   Instance size: 16 bytes
+   Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+   ```
+
+   从结果看，最后变成 10011010 00010011 01010010 00100110，升级为重量级锁了
+
+6. **普通对象 -> 偏向锁**
+   
+   TODO
+
+## 7.4 锁重入
 
 synchronized 是可重入锁
 
