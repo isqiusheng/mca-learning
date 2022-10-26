@@ -389,5 +389,440 @@ public final boolean hasQueuedPredecessors() {
 }
 ```
 
-- 公平锁，判断当前锁的占用状态 == 0，如果等于0，则会继续判断当前队列中是否有排队的情况。如果没有，才会使用CAS操作尝试获取锁
+- 公平锁，判断当前锁的占用状态 == 0，如果等于0，则会继续判断队列是否为空或者当前线程是否在队列头部。如果没有，才会使用CAS操作尝试获取锁
 - 这样可以保证遵循FIFO的原则，每一个先来的线程都可以最先获取到锁，但是增加了上下文切换与等待线程的状态变换时间。所以效率相较于非公平锁较慢。
+
+## isLock判断锁的状态
+
+```java
+// 底层源码
+final boolean isLocked() {
+	return getState() != 0;
+}
+```
+
+## ReentrantLock VS Synchronized
+
+1. Synchronized 是JVM层次的锁，ReentrantLock是JDK层次的锁实现；
+2. Synchronized的锁状态是无法在代码中直接判断的，但是ReentrantLock可以通过isLock() 方法来判断；
+3. Synchronized是非公平锁，而ReentrantLock可以是公平锁，也可以是非公平锁；
+4. SYnchronized是不可以被中断的，而ReentrantLock#lockInterruptibly方法是可以被中断的；
+5. 在发生异常的时，Synchronized会自动释放锁。而ReentrantLock 需要开发者在finally块中显示释放锁;
+6. ReentrantLock可以尝试获取锁，以及指定等待时长获取，相对比Synchronized更灵活些。
+
+# CountDownLatch
+
+一个或者多个线程，等待其他多个线程完成某件事情之后才能执行；
+
+门闩
+
+等待线程结束
+
+# CyclicBarrier
+
+多个线程互相等待，直到到达同一个同步点，再继续一起执行。
+
+循环栅栏
+
+满人发车
+
+```java
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+
+public class T03_TestCyclicBarrier {
+
+    public static void main(String[] args) {
+        CyclicBarrier barrier = new CyclicBarrier(20, () -> System.out.println("满人, 发车"));
+
+        for (int i = 0; i < 100; i++) {
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                } catch (BrokenBarrierException e) {
+                    e.printStackTrace();
+                }
+            }).start();
+        }
+    }
+}
+```
+
+运行结果
+
+```shell
+满人, 发车
+满人, 发车
+满人, 发车
+满人, 发车
+满人, 发车
+```
+
+> 打印5次满人，发车。如果循环的此时是90，那么就打印4次，而且此时线程是阻塞状态，没有结束
+
+## CountDownLatch 和 CyclicBarrier 的不同点：
+
+- CountDownLatch的计数器只能使用一次。而CyclicBarrier的计数器可以使用reset()方法重置。所以CyclicBarrier能处理更为复杂的业务场景，比如如果计算发生错误，可以重置计数器，并让线程们重新执行一次。
+- CyclicBarrier还提供其他有用的方法，比如getNumberWaiting方法可以获得CyclicBarrier阻塞的线程数量。isBroken方法用来知道阻塞的线程是否被中断。比如以下代码执行完之后会返回true。
+- CountDownLatch会阻塞主线程，CyclicBarrier不会阻塞主线程，只会阻塞子线程。
+- 某线程中断CyclicBarrier会抛出异常，避免了所有线程无限等待。
+
+# Phaser
+
+Phase是阶段的意思
+
+一般用不到。涉及到遗传算法会用到
+
+每个阶段要等人到齐，才能进行下一个阶段。
+
+```java
+import java.util.Random;
+import java.util.concurrent.Phaser;
+import java.util.concurrent.TimeUnit;
+
+public class T04_TestPhaser {
+
+    static Random r = new Random();
+    static MarriagePhaser phaser = new MarriagePhaser();
+
+
+    static void milliSleep(int milli) {
+        try {
+            TimeUnit.MILLISECONDS.sleep(milli);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+
+        phaser.bulkRegister(7);
+
+        for (int i = 0; i < 5; i++) {
+
+            new Thread(new Person("p" + i)).start();
+        }
+
+        new Thread(new Person("新郎")).start();
+        new Thread(new Person("新娘")).start();
+
+    }
+
+
+    static class MarriagePhaser extends Phaser {
+        @Override
+        protected boolean onAdvance(int phase, int registeredParties) {
+
+            switch (phase) {
+                case 0:
+                    System.out.println("所有人到齐了！" + registeredParties);
+                    System.out.println();
+                    return false;
+                case 1:
+                    System.out.println("所有人吃完了！" + registeredParties);
+                    System.out.println();
+                    return false;
+                case 2:
+                    System.out.println("所有人离开了！" + registeredParties);
+                    System.out.println();
+                    return false;
+                case 3:
+                    System.out.println("婚礼结束！新郎新娘抱抱！" + registeredParties);
+                    return true;
+                default:
+                    return true;
+            }
+        }
+    }
+
+    static class Person implements Runnable {
+        String name;
+
+        public Person(String name) {
+            this.name = name;
+        }
+
+        public void arrive() {
+
+            milliSleep(r.nextInt(1000));
+            System.out.printf("%s 到达现场！\n", name);
+            phaser.arriveAndAwaitAdvance();
+        }
+
+        public void eat() {
+            milliSleep(r.nextInt(1000));
+            System.out.printf("%s 吃完!\n", name);
+            phaser.arriveAndAwaitAdvance();
+        }
+
+        public void leave() {
+            milliSleep(r.nextInt(1000));
+            System.out.printf("%s 离开！\n", name);
+            phaser.arriveAndAwaitAdvance();
+        }
+
+        private void hug() {
+            if (name.equals("新郎") || name.equals("新娘")) {
+                milliSleep(r.nextInt(1000));
+                System.out.printf("%s 洞房！\n", name);
+                phaser.arriveAndAwaitAdvance();
+            } else {
+                phaser.arriveAndDeregister();
+                //phaser.register()
+            }
+        }
+
+        @Override
+        public void run() {
+            arrive();
+
+            eat();
+
+            leave();
+
+            hug();
+
+        }
+    }
+}
+```
+
+# ReadWriteLock
+
+读写锁。其实就是
+
+- 共享锁（读）
+- 排它锁（写）
+
+```java
+import java.util.Random;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+/**
+ * @author liufei
+ * @version 1.0.0
+ * @description
+ * @date 2022/10/26
+ */
+public class T05_TestReadWriteLock {
+
+    static Lock lock = new ReentrantLock();
+    private static int value;
+
+    static ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
+    static Lock readLock = readWriteLock.readLock();
+    static Lock writeLock = readWriteLock.writeLock();
+
+    public static void read(Lock lock) {
+        try {
+            lock.lock();
+            Thread.sleep(1000);
+            System.out.println("read over!");
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public static void write(Lock lock, int v) {
+        try {
+            lock.lock();
+            Thread.sleep(1000);
+            value = v;
+            System.out.println("write over!");
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+
+    public static void main(String[] args) {
+
+        for (int i = 0; i < 18; i++) {
+            new Thread(() -> {
+                //read(lock);
+                read(readLock);
+            }).start();
+        }
+
+        for (int i = 0; i < 2; i++) {
+            new Thread(() -> {
+                //write(lock, new Random().nextInt());
+                write(writeLock, new Random().nextInt());
+            }).start();
+        }
+    }
+
+}
+```
+
+分析下：
+
+如果读锁和写锁，共用同一锁，效率会很低。因为你读的时候，其他线程线程也是可以读的，读线程是互相不影响的。但是使用同一把锁之后，读的时候，其它在线程不管是读锁还是写锁都要等待。
+
+所以使用读写锁
+
+写锁是排它的。写的时候，别的线程不能写也不能读
+
+读锁是共享的。读的时候，别的线程也是可以读的。
+
+在读的上面可以大大提高效率
+
+# Semaphore（信号量）
+
+可以控制同时有几个线程在运行
+
+```java
+import java.util.concurrent.Semaphore;
+
+public class T06_TestSemaphore {
+
+    public static void main(String[] args) {
+
+        Semaphore s = new Semaphore(1);
+
+        new Thread(() -> {
+            try {
+                s.acquire();
+
+                System.out.println("T1 running...");
+                Thread.sleep(200);
+                System.out.println("T1 running end ...");
+
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            } finally {
+                s.release();
+            }
+        }).start();
+
+        new Thread(() -> {
+            try {
+                s.acquire();
+                System.out.println("T2 running...");
+                Thread.sleep(200);
+                System.out.println("T2 running end ...");
+
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            } finally {
+                s.release();
+            }
+        }).start();
+    }
+}
+```
+
+这里有两个线程
+
+```shell
+# 如果 Semaphore 的数量是1，那么就表示只能允许一个线程运行。输出结果
+T1 running...
+T1 running end ...
+T2 running...
+T2 running end ...
+
+# 如果 Semaphore 的数量是2，那么就表示能允许两个线程同时运行。输出结果
+T1 running...
+T2 running...
+T2 running end ...
+T1 running end ...
+```
+
+# Exchanger（交换器）
+
+**两个**线程之前交换数据
+
+```java
+import java.util.concurrent.Exchanger;
+
+public class T07_TestExchanger {
+
+    public static void main(String[] args) {
+
+        Exchanger<String> exchanger = new Exchanger<>();
+
+        new Thread(() -> {
+            String s = "T1";
+            try {
+                s = exchanger.exchange(s);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            System.out.println(Thread.currentThread().getName() + " -> " + s);
+        }, "t1").start();
+
+        new Thread(() -> {
+            String s = "T2";
+            try {
+                s = exchanger.exchange(s);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            System.out.println(Thread.currentThread().getName() + " -> " + s);
+        }, "t2").start();
+    }
+}
+```
+
+运行结果：
+
+```java
+t2 -> T1
+t1 -> T2
+```
+
+**exchange() 方法是阻塞方法**
+
+# LockSupport
+
+```java
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
+
+public class T08_TestLockSupport {
+
+    public static void main(String[] args) {
+        Thread t = new Thread(() -> {
+            for (int i = 0; i < 10; i++) {
+                System.out.println(i);
+                if (i == 5) {
+                    LockSupport.park();
+                }
+                try {
+                    TimeUnit.SECONDS.sleep(1);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+
+        t.start();
+
+        // 如果提前unpark，那么后面再park，也不在有用
+        //LockSupport.unpark(t);
+
+        try {
+            TimeUnit.SECONDS.sleep(8);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("after 8 senconds!");
+        LockSupport.unpark(t);
+    }
+}
+```
+
+注意：
+
+- 如果提前unpark，那么后面再park，也不在有用
+- LockSupport是可以指定线程的
